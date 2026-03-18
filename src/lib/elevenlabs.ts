@@ -1,8 +1,8 @@
 import fs from "fs/promises";
 import path from "path";
 
-// Default multilingual voice - can be changed
-const VOICE_ID = "21m00Tcm4TlvDq8ikWAM";
+// Premade voice (free-tier compatible) - Adam
+const VOICE_ID = "pNInz6obpgDQGcFmaJgB";
 
 export async function generateVoiceover(
   script: string,
@@ -48,6 +48,7 @@ export async function generateVoiceover(
     "audio",
     outputFilename
   );
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
   await fs.writeFile(outputPath, audioBuffer);
 
   return outputPath;

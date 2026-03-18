@@ -14,6 +14,7 @@ interface GenerationResult {
 
 export default function Home() {
   const [topic, setTopic] = useState("");
+  const [skipAudio, setSkipAudio] = useState(false);
   const [status, setStatus] = useState<Status>("idle");
   const [statusMessage, setStatusMessage] = useState("");
   const [result, setResult] = useState<GenerationResult | null>(null);
@@ -32,7 +33,7 @@ export default function Home() {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic: topic.trim() }),
+        body: JSON.stringify({ topic: topic.trim(), skipAudio }),
       });
 
       const data = await res.json();
@@ -63,7 +64,7 @@ export default function Home() {
 
         {/* Input */}
         <div className="mb-8">
-          <div className="flex gap-3">
+          <div className="flex gap-3 mb-3">
             <input
               type="text"
               value={topic}
@@ -108,6 +109,16 @@ export default function Home() {
               )}
             </button>
           </div>
+          <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer select-none mt-3">
+            <input
+              type="checkbox"
+              checked={skipAudio}
+              onChange={(e) => setSkipAudio(e.target.checked)}
+              disabled={status === "generating"}
+              className="w-4 h-4 accent-blue-500"
+            />
+            Skip audio (test video only)
+          </label>
         </div>
 
         {/* Status */}

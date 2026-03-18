@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { generateWithClaude } from "@/lib/claude";
 import { generateVoiceover } from "@/lib/elevenlabs";
 import { getAudioDurationInSeconds } from "@/lib/audio-utils";
-import { writeFile } from "fs/promises";
+import { writeFile, mkdir } from "fs/promises";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import path from "path";
@@ -14,7 +14,7 @@ export const maxDuration = 300; // 5 minutes for Vercel, but we're local
 
 export async function POST(request: NextRequest) {
   try {
-    const { topic } = await request.json();
+    const { topic, skipAudio } = await request.json();
     if (!topic || typeof topic !== "string") {
       return NextResponse.json(
         { error: "Topic is required" },
@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
     }
 
     const jobId = crypto.randomBytes(8).toString("hex");
-    console.log(`[${jobId}] Starting generation for topic: ${topic}`);
+    console.log(`[${jobId}] Starting generation for topic: ${topic} (skipAudio=${!!skipAudio})`);
 
     // Step 1: Generate component + voiceover script via Claude
     console.log(`[${jobId}] Calling Claude CLI...`);
@@ -31,15 +31,32 @@ export async function POST(request: NextRequest) {
       await generateWithClaude(topic);
     console.log(`[${jobId}] Claude generated component and voiceover script`);
 
-    // Step 2: Generate voiceover audio via ElevenLabs
-    console.log(`[${jobId}] Generating voiceover with ElevenLabs...`);
+    // Step 2: Generate voiceover audio via ElevenLabs (skippable)
     const audioFilename = `voiceover-${jobId}.mp3`;
-    const audioPath = await generateVoiceover(voiceoverScript, audioFilename);
-    console.log(`[${jobId}] Voiceover saved to ${audioPath}`);
+    let durationSeconds: number;
 
-    // Step 3: Get audio duration
-    const durationSeconds = await getAudioDurationInSeconds(audioPath);
-    console.log(`[${jobId}] Audio duration: ${durationSeconds}s`);
+    if (skipAudio) {
+      console.log(`[${jobId}] Skipping audio generation, writing silent placeholder`);
+      durationSeconds = 30;
+      // Write a minimal silent WAV (1s, 8kHz, 8-bit mono) so Remotion's staticFile() resolves
+      const sampleRate = 8000;
+      const numSamples = sampleRate * durationSeconds;
+      const wav = Buffer.alloc(44 + numSamples);
+      wav.write("RIFF", 0); wav.writeUInt32LE(36 + numSamples, 4); wav.write("WAVE", 8);
+      wav.write("fmt ", 12); wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20);
+      wav.writeUInt16LE(1, 22); wav.writeUInt32LE(sampleRate, 24);
+      wav.writeUInt32LE(sampleRate, 28); wav.writeUInt16LE(1, 32); wav.writeUInt16LE(8, 34);
+      wav.write("data", 36); wav.writeUInt32LE(numSamples, 40); wav.fill(128, 44);
+      const silentPath = path.join(process.cwd(), "public", "audio", audioFilename);
+      await mkdir(path.dirname(silentPath), { recursive: true });
+      await writeFile(silentPath, wav);
+    } else {
+      console.log(`[${jobId}] Generating voiceover with ElevenLabs...`);
+      const audioPath = await generateVoiceover(voiceoverScript, audioFilename);
+      console.log(`[${jobId}] Voiceover saved to ${audioPath}`);
+      durationSeconds = await getAudioDurationInSeconds(audioPath);
+      console.log(`[${jobId}] Audio duration: ${durationSeconds}s`);
+    }
 
     // Step 4: Inject audio filename into generated component and write to disk
     const componentPath = path.join(
@@ -49,6 +66,7 @@ export async function POST(request: NextRequest) {
       "generated",
       "VideoComposition.tsx"
     );
+    await mkdir(path.dirname(componentPath), { recursive: true });
     await writeFile(componentPath, componentCode, "utf-8");
     console.log(`[${jobId}] Component written to ${componentPath}`);
 
@@ -59,6 +77,7 @@ export async function POST(request: NextRequest) {
       "generated",
       `${jobId}.tsx`
     );
+    await mkdir(path.dirname(generatedCodePath), { recursive: true });
     await writeFile(generatedCodePath, componentCode, "utf-8");
 
     // Step 6: Render video via separate process
@@ -76,6 +95,7 @@ export async function POST(request: NextRequest) {
       ],
       {
         cwd: process.cwd(),
+        shell: true,
         timeout: 300000,
         maxBuffer: 10 * 1024 * 1024,
         env: { ...process.env, NODE_OPTIONS: "--max-old-space-size=4096" },
